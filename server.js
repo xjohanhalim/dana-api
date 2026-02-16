@@ -243,6 +243,37 @@ app.post('/topup', verifyToken, async (req, res) => {
   }
 });
 
+app.get('/init-db', async (req, res) => {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        saldo INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        merchant VARCHAR(100) NOT NULL,
+        nominal INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+
+    res.send("Database initialized successfully 🚀");
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+
 /* ======================
    START SERVER
 ====================== */
