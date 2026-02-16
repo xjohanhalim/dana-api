@@ -15,7 +15,7 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'DEV_SECRET_KEY';
 
-if (!process.env.DATABASE_URL) {
+if (!process.env.MYSQL_URL) {
   console.error("❌ DATABASE_URL not found in environment variables");
   process.exit(1);
 }
