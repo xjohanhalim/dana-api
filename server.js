@@ -11,7 +11,7 @@ app.use(express.json());
 const JWT_SECRET = 'SUPER_SECRET_DANAKILAT_KEY';
 
 const db = mysql.createPool({
-  host: 'localhost',
+  host: 'mysql.railway.internal',
   user: 'root',
   password: '',
   database: 'dana_kilat'
