@@ -24,7 +24,7 @@ if (!process.env.DATABASE_URL) {
    DATABASE CONNECTION
 ====================== */
 
-const db = mysql.createPool(process.env.DATABASE_URL);
+const db = mysql.createPool(process.env.MYSQL_URL);
 
 // Test connection saat startup
 (async () => {
