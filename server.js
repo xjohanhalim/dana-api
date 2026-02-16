@@ -15,20 +15,32 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'DEV_SECRET_KEY';
 
-const db = mysql.createPool({
-  host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+if (!process.env.DATABASE_URL) {
+  console.error("❌ DATABASE_URL not found in environment variables");
+  process.exit(1);
+}
+
+/* ======================
+   DATABASE CONNECTION
+====================== */
+
+const db = mysql.createPool(process.env.DATABASE_URL);
+
+// Test connection saat startup
+(async () => {
+  try {
+    const conn = await db.getConnection();
+    console.log("✅ Database Connected Successfully");
+    conn.release();
+  } catch (err) {
+    console.error("❌ Database Connection Failed:", err);
+  }
+})();
 
 /* ======================
    HEALTH CHECK
 ====================== */
+
 app.get('/', (req, res) => {
   res.json({ message: '🚀 DanaKilat API is running' });
 });
@@ -36,8 +48,8 @@ app.get('/', (req, res) => {
 /* ======================
    AUTH MIDDLEWARE
 ====================== */
-function verifyToken(req, res, next) {
 
+function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader)
     return res.status(401).json({ error: 'Unauthorized' });
@@ -56,16 +68,16 @@ function verifyToken(req, res, next) {
 /* ======================
    REGISTER
 ====================== */
+
 app.post('/register', async (req, res) => {
-
-  const { name, email, password } = req.body;
-
-  if (!name || !email || !password)
-    return res.status(400).json({ error: 'Semua field wajib diisi' });
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
   try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password)
+      return res.status(400).json({ error: 'Semua field wajib diisi' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     await db.query(
       'INSERT INTO users (name, email, password, saldo) VALUES (?, ?, ?, ?)',
       [name, email, hashedPassword, 0]
@@ -81,75 +93,88 @@ app.post('/register', async (req, res) => {
 /* ======================
    LOGIN
 ====================== */
+
 app.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  const { email, password } = req.body;
+    const [rows] = await db.query(
+      'SELECT * FROM users WHERE email = ?',
+      [email]
+    );
 
-  const [rows] = await db.query(
-    'SELECT * FROM users WHERE email = ?',
-    [email]
-  );
+    if (rows.length === 0)
+      return res.status(400).json({ error: 'Email tidak ditemukan' });
 
-  if (rows.length === 0)
-    return res.status(400).json({ error: 'Email tidak ditemukan' });
+    const user = rows[0];
 
-  const user = rows[0];
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid)
+      return res.status(400).json({ error: 'Password salah' });
 
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid)
-    return res.status(400).json({ error: 'Password salah' });
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '2h' }
+    );
 
-  const token = jwt.sign(
-    { id: user.id, email: user.email },
-    JWT_SECRET,
-    { expiresIn: '2h' }
-  );
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        saldo: user.saldo
+      }
+    });
 
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      saldo: user.saldo
-    }
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Terjadi kesalahan pada server' });
+  }
 });
 
 /* ======================
    GET USER
 ====================== */
+
 app.get('/user', verifyToken, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT id, name, email, saldo FROM users WHERE id = ?',
+      [req.user.id]
+    );
 
-  const [rows] = await db.query(
-    'SELECT id, name, email, saldo FROM users WHERE id = ?',
-    [req.user.id]
-  );
-
-  res.json(rows[0]);
+    res.json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Gagal mengambil data user' });
+  }
 });
 
 /* ======================
    GET TRANSACTIONS
 ====================== */
+
 app.get('/transactions', verifyToken, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT merchant, nominal, created_at as waktu 
+       FROM transactions 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC`,
+      [req.user.id]
+    );
 
-  const [rows] = await db.query(
-    `SELECT merchant, nominal, created_at as waktu 
-     FROM transactions 
-     WHERE user_id = ? 
-     ORDER BY created_at DESC`,
-    [req.user.id]
-  );
-
-  res.json(rows);
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Gagal mengambil transaksi' });
+  }
 });
 
 /* ======================
    PAYMENT
 ====================== */
-app.post('/payment', verifyToken, async (req, res) => {
 
+app.post('/payment', verifyToken, async (req, res) => {
   const { merchant, amount } = req.body;
   const userId = req.user.id;
 
@@ -157,7 +182,6 @@ app.post('/payment', verifyToken, async (req, res) => {
   await conn.beginTransaction();
 
   try {
-
     const [user] = await conn.query(
       'SELECT saldo FROM users WHERE id = ? FOR UPDATE',
       [userId]
@@ -193,25 +217,30 @@ app.post('/payment', verifyToken, async (req, res) => {
 /* ======================
    TOP UP
 ====================== */
+
 app.post('/topup', verifyToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.id;
 
-  const { amount } = req.body;
-  const userId = req.user.id;
+    if (!amount || amount <= 0)
+      return res.status(400).json({ error: 'Nominal tidak valid' });
 
-  if (!amount || amount <= 0)
-    return res.status(400).json({ error: 'Nominal tidak valid' });
+    await db.query(
+      'UPDATE users SET saldo = saldo + ? WHERE id = ?',
+      [amount, userId]
+    );
 
-  await db.query(
-    'UPDATE users SET saldo = saldo + ? WHERE id = ?',
-    [amount, userId]
-  );
+    await db.query(
+      'INSERT INTO transactions (user_id, merchant, nominal) VALUES (?, ?, ?)',
+      [userId, 'Top Up Saldo', amount]
+    );
 
-  await db.query(
-    'INSERT INTO transactions (user_id, merchant, nominal) VALUES (?, ?, ?)',
-    [userId, 'Top Up Saldo', amount]
-  );
+    res.json({ success: true });
 
-  res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Gagal melakukan top up' });
+  }
 });
 
 /* ======================
@@ -220,6 +249,6 @@ app.post('/topup', verifyToken, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 DanaKilat API running on port ${PORT}`);
 });
