@@ -3,18 +3,34 @@ const cors = require('cors');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const JWT_SECRET = 'SUPER_SECRET_DANAKILAT_KEY';
+/* ======================
+   ENV CONFIG
+====================== */
+
+const JWT_SECRET = process.env.JWT_SECRET || 'DEV_SECRET_KEY';
 
 const db = mysql.createPool({
-  host: 'mysql.railway.internal',
-  user: 'root',
-  password: '',
-  database: 'dana_kilat'
+  host: process.env.MYSQLHOST,
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+/* ======================
+   HEALTH CHECK
+====================== */
+app.get('/', (req, res) => {
+  res.json({ message: '🚀 DanaKilat API is running' });
 });
 
 /* ======================
@@ -43,6 +59,9 @@ function verifyToken(req, res, next) {
 app.post('/register', async (req, res) => {
 
   const { name, email, password } = req.body;
+
+  if (!name || !email || !password)
+    return res.status(400).json({ error: 'Semua field wajib diisi' });
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -116,7 +135,10 @@ app.get('/user', verifyToken, async (req, res) => {
 app.get('/transactions', verifyToken, async (req, res) => {
 
   const [rows] = await db.query(
-    'SELECT merchant, nominal, created_at as waktu FROM transactions WHERE user_id = ? ORDER BY created_at DESC',
+    `SELECT merchant, nominal, created_at as waktu 
+     FROM transactions 
+     WHERE user_id = ? 
+     ORDER BY created_at DESC`,
     [req.user.id]
   );
 
@@ -140,6 +162,9 @@ app.post('/payment', verifyToken, async (req, res) => {
       'SELECT saldo FROM users WHERE id = ? FOR UPDATE',
       [userId]
     );
+
+    if (user.length === 0)
+      throw new Error('User tidak ditemukan');
 
     if (user[0].saldo < amount)
       throw new Error('Saldo tidak cukup');
@@ -173,6 +198,9 @@ app.post('/topup', verifyToken, async (req, res) => {
   const { amount } = req.body;
   const userId = req.user.id;
 
+  if (!amount || amount <= 0)
+    return res.status(400).json({ error: 'Nominal tidak valid' });
+
   await db.query(
     'UPDATE users SET saldo = saldo + ? WHERE id = ?',
     [amount, userId]
@@ -186,6 +214,12 @@ app.post('/topup', verifyToken, async (req, res) => {
   res.json({ success: true });
 });
 
-app.listen(3000, () =>
-  console.log('🚀 DanaKilat API running with FULL JWT on port 3000')
-);
+/* ======================
+   START SERVER
+====================== */
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 DanaKilat API running on port ${PORT}`);
+});
